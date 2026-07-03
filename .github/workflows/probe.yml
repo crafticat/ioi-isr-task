@@ -1,0 +1,18 @@
+name: probe-cms-reachability
+# Phase 0 Step 0a — the decisive check: can a GitHub-hosted runner reach the
+# production CMS admin server? Set the repo secret CMS_BASE_URL first, then run
+# this manually (Actions tab → probe-cms-reachability → Run workflow).
+# Expected: http_code=200. If UNREACHABLE/timeout, production AWS is not
+# internet-reachable from hosted runners → switch to a self-hosted runner or the
+# KVM-on-CMS-host fallback before building on the GitHub approach.
+on: workflow_dispatch
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Curl the production AWS login page
+        run: |
+          set -x
+          curl -sS -o /dev/null -w "http_code=%{http_code}\n" \
+            --max-time 20 "${{ secrets.CMS_BASE_URL }}/login" || echo "UNREACHABLE"

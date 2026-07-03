@@ -34,3 +34,19 @@ def test_snapshots_before_import(tmp_path):
     # a snapshot file was written
     snaps = list((tmp_path).glob("task_5_*.zip"))
     assert snaps and snaps[0].read_bytes() == b"PKold"
+
+def test_real_export_failure_aborts_before_import(tmp_path):
+    (tmp_path / "task.zip").write_bytes(b"PKnew")
+    class FailClient:
+        def __init__(self): self.calls = []
+        def export_task(self, task_id):
+            self.calls.append(("export", task_id))
+            raise ConnectionError("network down")
+        def import_task(self, *a, **k):
+            self.calls.append(("import",))
+    c = FailClient()
+    with pytest.raises(ConnectionError):
+        deploy(c, task_id=5, contest_id=None, zip_path=str(tmp_path / "task.zip"),
+               snapshots_dir=str(tmp_path), contest_start=None, contest_stop=None,
+               now=None, force_live=False)
+    assert ("import",) not in c.calls   # never imported without a snapshot

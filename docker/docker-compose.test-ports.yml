@@ -1,0 +1,5 @@
+# docker/docker-compose.test-ports.yml  (override; ports moved to 189xx to avoid the shared 88xx stack)
+services:
+  devcms:
+    ports:
+      - "18889:8889"   # AdminWebServer

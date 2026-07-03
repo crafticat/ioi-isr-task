@@ -23,6 +23,19 @@ def compare_scores(
     return ok, "\n".join(lines) if lines else "OK (no expectations declared)"
 
 
+def verify_result(
+    expected: dict[str, dict[int, float]],
+    actual: dict[str, dict[int, float]],
+) -> tuple[bool, str]:
+    """Wraps compare_scores with a guard: a task that declares NO expectations
+    must not pass verification vacuously (that would let an under-specified task
+    through CI). Fail loud instead."""
+    if not expected:
+        return False, ("FAIL: task declares no model_solutions/subtask_expected_scores; "
+                       "nothing was verified")
+    return compare_scores(expected, actual)
+
+
 def _load_expectations(task_dir: str) -> dict[str, dict[int, float]]:
     """Read subtask_expected_scores from the canonical task.yaml.
 
@@ -56,7 +69,7 @@ def run(task_dir: str) -> int:
     expected = _load_expectations(task_dir)
     task_name = import_task(task_dir)
     actual = submit_and_score(task_name, list(expected.keys()))
-    ok, report = compare_scores(expected, actual)
+    ok, report = verify_result(expected, actual)
     print(report)
     return 0 if ok else 1
 

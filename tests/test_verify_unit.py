@@ -12,3 +12,13 @@ def test_mismatch_reported():
     ok, report = compare_scores(expected, actual)
     assert not ok
     assert "greedy.cpp" in report and "2" in report
+
+def test_verify_result_fails_when_no_expectations():
+    from cmsops.verify import verify_result
+    ok, report = verify_result({}, {})
+    assert not ok and "no" in report.lower()
+
+def test_verify_result_delegates_when_expectations_present():
+    from cmsops.verify import verify_result
+    ok, report = verify_result({"s.cpp": {1: 10}}, {"s.cpp": {1: 10}})
+    assert ok

@@ -20,8 +20,10 @@ jobs:
         with: { python-version: "3.11" }
       - run: pip install -e .
       - name: Package the task
+        env:
+          TASK_DIR: ${{ github.event.inputs.task_dir }}
         run: |
-          cd "${{ github.event.inputs.task_dir }}"
+          cd "$TASK_DIR"
           zip -r "$GITHUB_WORKSPACE/deploy.zip" . -x '.*'
       - name: Deploy (snapshot + guard + import)
         env:

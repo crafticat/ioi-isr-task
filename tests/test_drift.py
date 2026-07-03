@@ -1,5 +1,5 @@
 import io, zipfile
-from cmsops.drift import normalize_zip, diff_trees
+from cmsops.drift import normalize_zip, diff_trees, strip_top_dir
 
 def _zip(files):
     buf = io.BytesIO()
@@ -22,3 +22,14 @@ def test_diff_detects_changed_file():
 def test_diff_empty_when_equal():
     z = normalize_zip(_zip({"task.yaml": "x"}))
     assert diff_trees(z, z) == []
+
+def test_strip_top_dir_removes_common_prefix():
+    assert strip_top_dir({"task/task.yaml": b"x", "task/sub/a": b"y"}) == {"task.yaml": b"x", "sub/a": b"y"}
+
+def test_strip_top_dir_noop_when_multiple_tops():
+    t = {"a/x": b"1", "b/y": b"2"}
+    assert strip_top_dir(t) == t
+
+def test_strip_top_dir_noop_when_no_subpath():
+    t = {"task.yaml": b"x"}
+    assert strip_top_dir(t) == t

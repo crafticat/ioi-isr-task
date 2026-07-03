@@ -11,6 +11,19 @@ def normalize_zip(zip_bytes: bytes) -> dict[str, bytes]:
             out[name] = z.read(name)
     return out
 
+def strip_top_dir(tree: dict[str, bytes]) -> dict[str, bytes]:
+    """If every path shares one top-level directory (as italy_yaml exports do,
+    packing a task under <taskname>/), strip it so the export tree aligns with
+    the repo's task-relative paths. No-op when paths don't share one top dir.
+    NOTE: byte-exact-serialization drift (re-zipped tests, key reordering) is a
+    separate concern that must be validated against a real export when wiring live."""
+    if not tree:
+        return {}
+    tops = {p.split("/", 1)[0] for p in tree}
+    if len(tops) != 1 or not all("/" in p for p in tree):
+        return dict(tree)
+    return {p.split("/", 1)[1]: data for p, data in tree.items()}
+
 def diff_trees(repo: dict[str, bytes], live: dict[str, bytes]) -> list[str]:
     """Return sorted paths that differ (added, removed, or changed)."""
     changed = set()
@@ -33,10 +46,15 @@ def main() -> int:
     from cmsops.config import Settings
     import json
     client = CmsAdminClient(Settings.from_env())
-    mapping = json.load(open("task_ids.json"))   # {"<dirname>": <cms_task_id>}
+    if not os.path.exists("task_ids.json"):
+        raise SystemExit(
+            "task_ids.json not found: create it as a JSON object mapping each "
+            "tasks/<dirname> to its CMS task id, e.g. {\"uchuva\": 12}")
+    with open("task_ids.json") as fh:
+        mapping = json.load(fh)   # {"<dirname>": <cms_task_id>}
     any_drift = False
     for dirname, task_id in mapping.items():
-        live = normalize_zip(client.export_task(task_id))
+        live = strip_top_dir(normalize_zip(client.export_task(task_id)))
         repo_dir = os.path.join("tasks", dirname)
         repo = _read_tree(repo_dir)
         changed = diff_trees(repo, live)
@@ -59,7 +77,8 @@ def _read_tree(root: str) -> dict[str, bytes]:
         for f in files:
             full = os.path.join(base, f)
             rel = os.path.relpath(full, root)
-            out[rel] = open(full, "rb").read()
+            with open(full, "rb") as fh:
+                out[rel] = fh.read()
     return out
 
 def _clear_dir(root: str) -> None:

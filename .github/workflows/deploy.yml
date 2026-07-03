@@ -12,6 +12,8 @@ jobs:
   deploy:
     runs-on: ubuntu-24.04
     environment: production        # <-- attach a required-reviewer protection rule to this env
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -35,5 +37,10 @@ jobs:
         run: |
           git config user.name "cms-deploy-bot"
           git config user.email "deploy@ioi-isr.invalid"
-          git add snapshots/ && git commit -m "snapshot before deploy of task ${{ github.event.inputs.task_id }}" || true
-          git push || true
+          git add snapshots/
+          if git diff --cached --quiet; then
+            echo "no snapshot to commit (new task or no active dataset)"
+          else
+            git commit -m "snapshot before deploy of task ${{ github.event.inputs.task_id }}"
+            git push
+          fi

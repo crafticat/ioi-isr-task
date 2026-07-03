@@ -1,0 +1,15 @@
+[project]
+name = "cmsops"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["requests>=2.31"]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0", "pandas>=2.0"]
+
+[tool.setuptools]
+packages = ["cmsops"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["livecms: integration test requiring a running local dev CMS"]

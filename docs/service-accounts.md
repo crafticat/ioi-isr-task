@@ -16,3 +16,18 @@ Create two dedicated admins in the production CMS (AWS → Admins → Add):
 
 Rotate on any suspected exposure (revoke via AWS → Admins). Neither account can
 SSH, run SQL, change users/scores, or touch infrastructure.
+
+## ⚠️ Creating a read-only account (verified against the fork)
+
+`cmsAddAdmin <user> -p <pass>` has **no read-only flag and creates a
+FULL-access admin by default** (`permission_all = true`). To make `ai-reader`
+genuinely read-only you must clear its bits after creation — either:
+
+- **AWS web form:** AWS → Admins → ai-reader → uncheck all permissions → save; or
+- **SQL:** `UPDATE admins SET permission_all=false, permission_messaging=false
+  WHERE username='ai-reader';` (single quotes — it's a string literal).
+
+Then verify: `SELECT username, permission_all, permission_messaging FROM admins;`
+— `ai-reader` must show `f | f`. (`ai-uploader` correctly keeps `permission_all
+= t`, so no change is needed there.) This was confirmed live against the fork in
+the local demo (`cms-demo/`).

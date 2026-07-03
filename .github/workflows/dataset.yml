@@ -22,17 +22,7 @@ jobs:
           CMS_USERNAME: ${{ secrets.CMS_READER_USER }}
           CMS_PASSWORD: ${{ secrets.CMS_READER_PASS }}
           TP_ID: ${{ github.event.inputs.training_program_id || vars.DEFAULT_TP_ID }}
-        run: |
-          python - <<'PY'
-          import json, os, datetime
-          from cmsops.client import CmsAdminClient
-          from cmsops.config import Settings
-          from cmsops.analytics import fetch_ranking_history
-          c = CmsAdminClient(Settings.from_env())
-          rows = fetch_ranking_history(c, int(os.environ["TP_ID"]))
-          stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
-          json.dump({"last_sync": stamp, "rows": rows}, open("data/ranking.json","w"))
-          PY
+        run: python -m cmsops.analytics
       - name: Commit dataset
         run: |
           git config user.name "cms-dataset-bot"

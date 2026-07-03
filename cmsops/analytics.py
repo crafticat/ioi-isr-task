@@ -22,3 +22,24 @@ def fetch_ranking_history(client, training_program_id: int) -> list[dict]:
         timeout=120)
     resp.raise_for_status()
     return parse_ranking_history(resp.json())
+
+def build_dataset(rows: list[dict], last_sync: str) -> dict:
+    return {"last_sync": last_sync, "rows": rows}
+
+def main() -> int:
+    import os, sys, json, datetime
+    from cmsops.client import CmsAdminClient
+    from cmsops.config import Settings
+    tp_id = int(os.environ["TP_ID"])
+    client = CmsAdminClient(Settings.from_env())
+    rows = fetch_ranking_history(client, tp_id)
+    stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+    os.makedirs("data", exist_ok=True)
+    with open("data/ranking.json", "w") as fh:
+        json.dump(build_dataset(rows, stamp), fh)
+    print(f"wrote data/ranking.json ({len(rows)} rows) at {stamp}")
+    return 0
+
+if __name__ == "__main__":
+    import sys
+    sys.exit(main())

@@ -11,3 +11,8 @@ def test_solved_full_filter():
     rows = [{"user_id": 12, "task_id": 3, "time": 1, "score": 100.0},
             {"user_id": 99, "task_id": 3, "time": 1, "score": 60.0}]
     assert users_with_full_score(rows, task_id=3, full=100.0) == [12]
+
+def test_build_dataset():
+    from cmsops.analytics import build_dataset
+    d = build_dataset([{"user_id": 1}], "2026-07-03T00:00:00+00:00")
+    assert d == {"last_sync": "2026-07-03T00:00:00+00:00", "rows": [{"user_id": 1}]}

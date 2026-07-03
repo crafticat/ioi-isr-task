@@ -2,6 +2,7 @@ from __future__ import annotations
 import os, sys
 import requests
 from datetime import datetime, timezone
+from cmsops.client import NoActiveDatasetError
 from cmsops.contest import is_contest_live
 
 def deploy(client, *, task_id: int, contest_id: int | None, zip_path: str,
@@ -22,16 +23,13 @@ def deploy(client, *, task_id: int, contest_id: int | None, zip_path: str,
         data = client.export_task(task_id)
     except requests.HTTPError as exc:
         if exc.response is not None and exc.response.status_code == 404:
-            snap_path = ""
+            snap_path = ""   # task doesn't exist on the server yet
             print(f"note: no pre-deploy snapshot (task {task_id} not found on server)")
         else:
             raise
-    except RuntimeError as exc:
-        if "active dataset" in str(exc):
-            snap_path = ""
-            print(f"note: no pre-deploy snapshot ({exc})")
-        else:
-            raise
+    except NoActiveDatasetError:
+        snap_path = ""   # task exists but has no active dataset to export
+        print(f"note: no pre-deploy snapshot (task {task_id} has no active dataset)")
     else:
         with open(snap_path, "wb") as fh:
             fh.write(data)

@@ -3,6 +3,11 @@ import io
 import requests
 from cmsops.config import Settings
 
+class NoActiveDatasetError(RuntimeError):
+    """Raised when a task cannot be exported because it has no active dataset
+    (the admin export handler redirects instead of returning a zip). This is the
+    benign 'nothing to snapshot' case, distinct from a real export failure."""
+
 class CmsAdminClient:
     """Drives the ioi-isr/cms AdminWebServer over HTTP.
 
@@ -52,16 +57,27 @@ class CmsAdminClient:
             self.login()
 
     def export_task(self, task_id: int, timeout: float = 120.0) -> bytes:
-        """GET /task/{id}/export → italy_yaml zip bytes (perm AUTHENTICATED)."""
+        """GET /task/{id}/export → italy_yaml zip bytes (perm AUTHENTICATED).
+
+        Raises NoActiveDatasetError if the handler redirects (task has no active
+        dataset — benign). Raises requests.HTTPError on 4xx/5xx (e.g. 404 =
+        task absent). Raises RuntimeError on an unexpected non-zip 200 (fail loud
+        rather than let a caller treat it as benign)."""
         self._ensure_login()
-        resp = self.session.get(self._url(f"/task/{task_id}/export"), timeout=timeout)
+        resp = self.session.get(
+            self._url(f"/task/{task_id}/export"),
+            timeout=timeout,
+            allow_redirects=False,
+        )
+        if resp.status_code in (301, 302, 303, 307, 308):
+            raise NoActiveDatasetError(
+                f"task {task_id} has no active dataset to export (export redirected)")
         resp.raise_for_status()
         ctype = resp.headers.get("Content-Type", "")
         if "zip" not in ctype:
             raise RuntimeError(
-                f"export did not return a zip (Content-Type={ctype!r}); "
-                f"task {task_id} may have no active dataset"
-            )
+                f"export of task {task_id} returned a non-zip 200 response "
+                f"(Content-Type={ctype!r}); refusing to treat as benign")
         return resp.content
 
     def import_task(

@@ -50,3 +50,36 @@ def test_real_export_failure_aborts_before_import(tmp_path):
                snapshots_dir=str(tmp_path), contest_start=None, contest_stop=None,
                now=None, force_live=False)
     assert ("import",) not in c.calls   # never imported without a snapshot
+
+def test_no_active_dataset_skips_snapshot_and_imports(tmp_path):
+    from cmsops.client import NoActiveDatasetError
+    (tmp_path / "task.zip").write_bytes(b"PKnew")
+    class NoDatasetClient:
+        def __init__(self): self.calls = []
+        def export_task(self, task_id):
+            self.calls.append(("export", task_id))
+            raise NoActiveDatasetError("no active dataset")
+        def import_task(self, zip_bytes, *, update, contest_id=None, **kw):
+            self.calls.append(("import", update, contest_id))
+    c = NoDatasetClient()
+    deploy(c, task_id=5, contest_id=None, zip_path=str(tmp_path/"task.zip"),
+           snapshots_dir=str(tmp_path), contest_start=None, contest_stop=None,
+           now=None, force_live=False)
+    assert ("import", True, None) in c.calls          # imported
+    assert not list(tmp_path.glob("task_5_*.zip"))    # no snapshot written
+
+def test_unexpected_non_zip_aborts_before_import(tmp_path):
+    (tmp_path / "task.zip").write_bytes(b"PKnew")
+    class WeirdClient:
+        def __init__(self): self.calls = []
+        def export_task(self, task_id):
+            self.calls.append(("export", task_id))
+            raise RuntimeError("export of task 5 returned a non-zip 200 response")
+        def import_task(self, *a, **k):
+            self.calls.append(("import",))
+    c = WeirdClient()
+    with pytest.raises(RuntimeError, match="non-zip"):
+        deploy(c, task_id=5, contest_id=None, zip_path=str(tmp_path/"task.zip"),
+               snapshots_dir=str(tmp_path), contest_start=None, contest_stop=None,
+               now=None, force_live=False)
+    assert ("import",) not in c.calls                 # never imported

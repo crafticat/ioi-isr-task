@@ -1,0 +1,58 @@
+# .github/workflows/verify.yml
+name: verify
+on:
+  pull_request:
+    paths: ["tasks/**"]
+  push:
+    branches: [main]
+    paths: ["tasks/**"]
+
+jobs:
+  verify:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Check out tasks repo
+        uses: actions/checkout@v4
+        with: { path: tasks }
+
+      - name: Check out the CMS fork (pinned)
+        uses: actions/checkout@v4
+        with:
+          repository: ioi-isr/cms
+          ref: ${{ vars.CMS_FORK_SHA }}      # pin a known-good commit
+          path: cms
+
+      - name: Sanity-check cgroups (isolate needs cgroup v2)
+        run: mount | grep cgroup
+
+      - name: Determine changed tasks
+        id: changed
+        run: |
+          cd tasks
+          base="${{ github.event.pull_request.base.sha || github.event.before }}"
+          git fetch --depth=2 origin "$base" || true
+          tasks=$(git diff --name-only "$base" HEAD -- 'tasks/**' \
+                  | cut -d/ -f2 | sort -u | tr '\n' ' ')
+          echo "tasks=$tasks" >> "$GITHUB_OUTPUT"
+
+      - name: Bring up the dev CMS (privileged docker + isolate)
+        working-directory: cms
+        run: |
+          docker compose -p verify -f docker/docker-compose.dev.yml up -d devdb devcms
+          for i in $(seq 1 60); do curl -sS -o /dev/null http://localhost:8889/login && break; sleep 2; done
+          docker compose -p verify -f docker/docker-compose.dev.yml exec -T devcms \
+            bash -lc 'cmsAddUser verifier -p x 2>/dev/null || true'
+
+      - name: Verify each changed task
+        working-directory: cms
+        run: |
+          set -e
+          for t in ${{ steps.changed.outputs.tasks }}; do
+            echo "::group::verify $t"
+            docker compose -p verify -f docker/docker-compose.dev.yml exec -T \
+              -e VERIFY_CONTEST_ID=1 -e VERIFY_USERNAME=verifier \
+              devcms bash -lc "cd /verify && python -m cmsops.verify /tasks/$t"
+            echo "::endgroup::"
+          done
+        # Note: mount the tasks repo (incl. cmsops) into the container — add a
+        # bind mount to docker-compose.dev.yml override, or `docker cp` before exec.

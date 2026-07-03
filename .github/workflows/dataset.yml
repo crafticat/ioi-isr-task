@@ -1,0 +1,41 @@
+# .github/workflows/dataset.yml
+name: dataset
+on:
+  schedule:
+    - cron: "*/15 * * * *"    # coarse cadence; tighten during contests via workflow_dispatch
+  workflow_dispatch:
+    inputs:
+      training_program_id: { description: "training program id", required: true }
+
+jobs:
+  fetch:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with: { ref: data }        # dedicated data branch
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -e ".[dev]"
+      - name: Fetch ranking history
+        env:
+          CMS_BASE_URL: ${{ secrets.CMS_BASE_URL }}
+          CMS_USERNAME: ${{ secrets.CMS_READER_USER }}
+          CMS_PASSWORD: ${{ secrets.CMS_READER_PASS }}
+          TP_ID: ${{ github.event.inputs.training_program_id || vars.DEFAULT_TP_ID }}
+        run: |
+          python - <<'PY'
+          import json, os, datetime
+          from cmsops.client import CmsAdminClient
+          from cmsops.config import Settings
+          from cmsops.analytics import fetch_ranking_history
+          c = CmsAdminClient(Settings.from_env())
+          rows = fetch_ranking_history(c, int(os.environ["TP_ID"]))
+          stamp = datetime.datetime.now(datetime.timezone.utc).isoformat()
+          json.dump({"last_sync": stamp, "rows": rows}, open("data/ranking.json","w"))
+          PY
+      - name: Commit dataset
+        run: |
+          git config user.name "cms-dataset-bot"
+          git config user.email "dataset@ioi-isr.invalid"
+          git add data/ranking.json && git commit -m "data: ranking snapshot" || true
+          git push || true

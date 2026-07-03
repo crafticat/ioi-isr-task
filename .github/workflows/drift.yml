@@ -1,0 +1,30 @@
+# .github/workflows/drift.yml
+name: drift
+on:
+  schedule:
+    - cron: "0 3 * * *"     # nightly 03:00 UTC
+  workflow_dispatch: {}
+
+jobs:
+  drift:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -e .
+      - name: Export live tasks and diff against the repo
+        id: drift
+        env:
+          CMS_BASE_URL: ${{ secrets.CMS_BASE_URL }}
+          CMS_USERNAME: ${{ secrets.CMS_READER_USER }}
+          CMS_PASSWORD: ${{ secrets.CMS_READER_PASS }}
+        run: python -m cmsops.drift
+      - name: Open a PR if the server diverged
+        if: steps.drift.outputs.drift == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          branch: server-state/drift
+          title: "server-side changes detected in production tasks"
+          body: "drift.yml exported live task packages and found differences from the repo. Review the diff below — someone hand-edited a task on the server."
+          commit-message: "chore: sync server-side task changes"

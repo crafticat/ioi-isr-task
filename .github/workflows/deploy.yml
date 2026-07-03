@@ -1,0 +1,39 @@
+# .github/workflows/deploy.yml
+name: deploy
+on:
+  workflow_dispatch:
+    inputs:
+      task_id:     { description: "CMS task id", required: true }
+      task_dir:    { description: "tasks/<dir> to deploy", required: true }
+      contest_id:  { description: "CMS contest id (blank = unattached)", required: false }
+      force_live:  { description: "Deploy even if the contest is running", type: boolean, default: false }
+
+jobs:
+  deploy:
+    runs-on: ubuntu-24.04
+    environment: production        # <-- attach a required-reviewer protection rule to this env
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.11" }
+      - run: pip install -e .
+      - name: Package the task
+        run: |
+          cd "${{ github.event.inputs.task_dir }}"
+          zip -r "$GITHUB_WORKSPACE/deploy.zip" . -x '.*'
+      - name: Deploy (snapshot + guard + import)
+        env:
+          CMS_BASE_URL: ${{ secrets.CMS_BASE_URL }}
+          CMS_USERNAME: ${{ secrets.CMS_UPLOADER_USER }}
+          CMS_PASSWORD: ${{ secrets.CMS_UPLOADER_PASS }}
+          DEPLOY_TASK_ID: ${{ github.event.inputs.task_id }}
+          DEPLOY_CONTEST_ID: ${{ github.event.inputs.contest_id }}
+          DEPLOY_ZIP: ${{ github.workspace }}/deploy.zip
+          DEPLOY_FORCE_LIVE: ${{ github.event.inputs.force_live }}
+        run: python -m cmsops.deploy
+      - name: Commit the snapshot for rollback
+        run: |
+          git config user.name "cms-deploy-bot"
+          git config user.email "deploy@ioi-isr.invalid"
+          git add snapshots/ && git commit -m "snapshot before deploy of task ${{ github.event.inputs.task_id }}" || true
+          git push || true

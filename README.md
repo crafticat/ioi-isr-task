@@ -14,7 +14,10 @@ credentials and no CMS network path.
 - `cmsops/` — the tested Python package (client, deploy, drift, analytics, verify).
 - `.github/workflows/` — `verify` (CI task verification), `deploy` (human-approved
   import), `drift` (server→PR), `dataset` (analytics fetch), `probe` (Phase-0 check).
-- `skills/cms-analytics/` — the agent's analytics skill.
+- `.claude/skills/` — the agent's skills, auto-loaded by any Claude Code session
+  on this repo (browser `claude.ai/code` or local): `iloi-cms-task` (authoring a
+  question end-to-end) and `cms-analytics` (contest Q&A). Committing them here is
+  what makes browser-based, zero-install authoring work.
 - `docs/` — `service-accounts.md`, `secrets.md`, `boss-brief.md`.
 
 ## Getting started

@@ -1,4 +1,5 @@
 from __future__ import annotations
+import os
 import sys
 
 def compare_scores(
@@ -39,15 +40,17 @@ def verify_result(
 def _load_expectations(task_dir: str) -> dict[str, dict[int, float]]:
     """Read subtask_expected_scores from the canonical task.yaml.
 
-    Canonical schema (per ILOI importer): each model solution entry carries
-    `files:` and `subtask_expected_scores:` (per-subtask min/max). This uses the
-    max (target) score per subtask as the expectation.
+    Canonical schema (tasks/_template/task.yaml): each `model_solutions:`
+    entry carries `files:` (list of filenames under solutions/) and
+    `subtask_expected_scores:` mapping the 0-based subtask index (as a
+    string — the same `idx` the Group* score types write in score_details)
+    to `{min: .., max: ..}`. Verify pins the max (target) score.
     """
-    import os, yaml  # PyYAML ships in the CMS venv
+    import yaml  # PyYAML ships in the CMS venv
     with open(os.path.join(task_dir, "task.yaml"), encoding="utf-8") as fh:
         meta = yaml.safe_load(fh)
     out: dict[str, dict[int, float]] = {}
-    for sol in meta.get("model_solutions", meta.get("solutions", [])):
+    for sol in meta.get("model_solutions", meta.get("solutions", [])) or []:
         files = sol.get("files") or []
         name = files[0] if files else sol.get("name", "solution")
         scores = sol.get("subtask_expected_scores") or {}
@@ -60,15 +63,16 @@ def run(task_dir: str) -> int:
     """Headless verify inside the devcms container.
 
     Steps (uses cms CLIs already on PATH + a live DB):
-      1. cmsImportTask -L italy_yaml -c <verify_contest_id> <task_dir>
-      2. cmsAddSubmission for each declared model solution
-      3. wait for scoring, read ParticipationTaskScore.subtask_max_scores
+      1. cmsImportTask -L italy_yaml -u -S -c <verify_contest_id> <task_dir>
+      2. cmsAddSubmission for each declared model solution (as the verifier)
+      3. wait for scoring, read each submission's score_details per subtask
       4. compare to subtask_expected_scores
     """
     from cmsops.verify_cms import import_task, submit_and_score  # thin cms.db wrappers
+    task_dir = os.path.abspath(task_dir)
     expected = _load_expectations(task_dir)
     task_name = import_task(task_dir)
-    actual = submit_and_score(task_name, list(expected.keys()))
+    actual = submit_and_score(task_dir, task_name, sorted(expected.keys()))
     ok, report = verify_result(expected, actual)
     print(report)
     return 0 if ok else 1

@@ -8,6 +8,9 @@ on:
 jobs:
   drift:
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -22,7 +25,7 @@ jobs:
         run: python -m cmsops.drift
       - name: Open a PR if the server diverged
         if: steps.drift.outputs.drift == 'true'
-        uses: peter-evans/create-pull-request@v6
+        uses: peter-evans/create-pull-request@c5a7806660adbe173f04e3e038b0ccdcd758773c # v6
         with:
           branch: server-state/drift
           title: "server-side changes detected in production tasks"

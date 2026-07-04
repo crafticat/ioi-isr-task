@@ -1,0 +1,79 @@
+# Verify-pipeline fixture: minimal A+B batch task in the canonical ILOI schema
+# (see tasks/_template/task.yaml). Deliberately tiny; used by CI to prove that
+# `python -m cmsops.verify` performs a real import -> submit -> evaluate ->
+# per-subtask score comparison inside the disposable CMS.
+#
+# Subtasks (GroupMin, 0-based idx = the `idx` field in score_details):
+#   0: samples             ( 0 pts)  |A|,|B| <= 10^3
+#   1: ST1 small values    (30 pts)  |A|,|B| <= 10^3
+#   2: ST2 full constraint (70 pts)  |A|,|B| <= 10^18  (int32 must fail)
+# Containment: every ST1 test also belongs to ST2 (template convention).
+
+name: aplusb
+title: A Plus B (verify fixture)
+primary_language: he
+version: Default
+
+submission_format:
+- aplusb.%l
+
+feedback_level: oi_restricted
+score_mode: max_subtask
+
+token_mode: disabled
+token_min_interval: 0
+token_gen_initial: 2
+token_gen_number: 2
+token_gen_interval: 1800
+
+score_precision: 2
+
+time_limit: 1.0
+memory_limit: 256
+
+compilation: alone
+infile: ''
+outfile: ''
+output_eval: diff
+
+score_type: GroupMin
+score_type_parameters:
+- - 0
+  - .*ST0_(?#CMS)                    # samples (0 pts)
+- - 30
+  - .*ST1_(?#CMS)                    # subtask 1: small values
+- - 70
+  - .*ST2_(?#CMS)                    # subtask 2: values up to 10^18
+
+n_input: 7
+input_template: input_*.txt
+output_template: output_*.txt
+
+public_testcases: all
+
+# ---- Reference solutions (what cmsops.verify asserts) -----------------------
+# Keys of subtask_expected_scores are the 0-based subtask indices as strings —
+# the same `idx` the Group* score types write into score_details.
+model_solutions:
+- name: full
+  description: Intended solution; long long everywhere.
+  expected_score_min: 100.0
+  expected_score_max: 100.0
+  language: C++17 / g++
+  subtask_expected_scores:
+    '0': {min: 0.0, max: 0.0}
+    '1': {min: 30.0, max: 30.0}
+    '2': {min: 70.0, max: 70.0}
+  files:
+  - full.cpp
+- name: weak_int32
+  description: Stores A and B in 32-bit ints; correct on ST1, wrong on ST2.
+  expected_score_min: 30.0
+  expected_score_max: 30.0
+  language: C++17 / g++
+  subtask_expected_scores:
+    '0': {min: 0.0, max: 0.0}
+    '1': {min: 30.0, max: 30.0}
+    '2': {min: 0.0, max: 0.0}
+  files:
+  - weak_int32.cpp

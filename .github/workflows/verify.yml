@@ -1,4 +1,12 @@
 # .github/workflows/verify.yml
+#
+# For every changed task package, prove inside a disposable CMS (the pinned
+# ioi-isr/cms fork) that its model solutions score exactly what task.yaml
+# declares per subtask:  import (-S) -> submit as `verifier` -> real
+# evaluation (isolate sandbox) -> compare score_details to
+# subtask_expected_scores.  Exact same sequence as the proven local flow
+# (docker/docker-compose.verify.yml + scripts/verify_contest_setup.py +
+# `python -m cmsops.verify`).
 name: verify
 on:
   pull_request:
@@ -7,52 +15,153 @@ on:
     branches: [main]
     paths: ["tasks/**"]
 
+env:
+  # Used by docker/docker-compose.verify.yml (bind-mounts the repo at /verify).
+  TASKS_WORKSPACE: ${{ github.workspace }}/tasks
+  # All compose invocations must agree on project + files.
+  COMPOSE_ARGS: -p verify -f docker/docker-compose.dev.yml -f ../tasks/docker/docker-compose.verify.yml
+
 jobs:
   verify:
     runs-on: ubuntu-24.04
+    timeout-minutes: 45
     steps:
       - name: Check out tasks repo
         uses: actions/checkout@v4
-        with: { path: tasks }
-
-      - name: Check out the CMS fork (pinned)
-        uses: actions/checkout@v4
         with:
-          repository: ioi-isr/cms
-          ref: ${{ vars.CMS_FORK_SHA }}      # pin a known-good commit
-          path: cms
-
-      - name: Sanity-check cgroups (isolate needs cgroup v2)
-        run: mount | grep cgroup
+          path: tasks
+          fetch-depth: 0
 
       - name: Determine changed tasks
         id: changed
+        working-directory: tasks
         run: |
-          cd tasks
           base="${{ github.event.pull_request.base.sha || github.event.before }}"
-          git fetch --depth=2 origin "$base" || true
+          if [ -z "$base" ] || ! git cat-file -e "$base" 2>/dev/null; then
+            base=$(git rev-parse HEAD~1 2>/dev/null || git hash-object -t tree /dev/null)
+          fi
           tasks=$(git diff --name-only "$base" HEAD -- 'tasks/**' \
-                  | cut -d/ -f2 | sort -u | tr '\n' ' ')
+                  | cut -d/ -f2 | sort -u \
+                  | while read -r t; do
+                      [ "$t" = "_template" ] && continue   # template is not a task
+                      [ -d "tasks/$t" ] || continue        # skip deleted dirs
+                      echo "$t"
+                    done | tr '\n' ' ')
           echo "tasks=$tasks" >> "$GITHUB_OUTPUT"
+          if [ -z "${tasks// }" ]; then
+            echo "No task packages changed - nothing to verify."
+          else
+            echo "Changed tasks: $tasks"
+          fi
 
-      - name: Bring up the dev CMS (privileged docker + isolate)
+      - name: Check out the CMS fork (pinned)
+        if: steps.changed.outputs.tasks != ''
+        uses: actions/checkout@v4
+        with:
+          repository: ioi-isr/cms
+          ref: ${{ vars.CMS_FORK_SHA }}      # pin the exact commit verify was proven against
+          path: cms
+
+      - name: Sanity-check cgroups (isolate needs cgroup v2)
+        if: steps.changed.outputs.tasks != ''
+        run: mount | grep cgroup2
+
+      - name: Make task dirs writable by the container user
+        if: steps.changed.outputs.tasks != ''
+        # The italy_yaml loader writes sentinel files (.itime / .import_error)
+        # into the task dir; the runner user is uid 1001 but the image's
+        # cmsuser is uid 1100.
+        run: chmod -R a+rwX "$TASKS_WORKSPACE"   # whole checkout: pip writes cmsops.egg-info at the root, the loader writes sentinels under tasks/
+
+      - name: Bring up the dev CMS (build fork image, start db + container)
+        if: steps.changed.outputs.tasks != ''
         working-directory: cms
         run: |
-          docker compose -p verify -f docker/docker-compose.dev.yml up -d devdb devcms
-          for i in $(seq 1 60); do curl -sS -o /dev/null http://localhost:8889/login && break; sleep 2; done
-          docker compose -p verify -f docker/docker-compose.dev.yml exec -T devcms \
-            bash -lc 'cmsAddUser verifier -p x 2>/dev/null || true'
+          docker compose $COMPOSE_ARGS up -d --build devdb devcms
+          for i in $(seq 1 60); do
+            docker compose $COMPOSE_ARGS exec -T devdb pg_isready -U postgres -d cmsdb && break
+            sleep 2
+          done
+          docker compose $COMPOSE_ARGS exec -T devdb pg_isready -U postgres -d cmsdb
+
+      - name: Wire isolate cgroup v2 runtime (as root)
+        if: steps.changed.outputs.tasks != ''
+        working-directory: cms
+        # Same wiring proven locally: a dedicated /sys/fs/cgroup/isolate
+        # subtree off the host root (the container is privileged with
+        # cgroup: host). isolate-cg-keeper is systemd-oriented and cannot
+        # enable controllers on a container cgroup that already has member
+        # processes (cgroup v2 no-internal-process rule), so wire it directly.
+        run: |
+          docker compose $COMPOSE_ARGS exec -T -u root devcms bash -c '
+            set -e
+            mkdir -p /run/isolate /sys/fs/cgroup/isolate
+            echo "+cpu +memory +pids +cpuset +io" > /sys/fs/cgroup/cgroup.subtree_control
+            echo "+cpu +memory +pids +cpuset +io" > /sys/fs/cgroup/isolate/cgroup.subtree_control
+            echo /sys/fs/cgroup/isolate > /run/isolate/cgroup
+          '
+          docker compose $COMPOSE_ARGS exec -T devcms bash -c '
+            set -e
+            isolate --cg -b 99 --init >/dev/null
+            isolate --cg -b 99 --run -- /bin/true
+            isolate --cg -b 99 --cleanup
+            echo "isolate sandbox OK"
+          '
+
+      - name: Init DB schema + verify contest + cmsops
+        if: steps.changed.outputs.tasks != ''
+        id: setup
+        working-directory: cms
+        run: |
+          docker compose $COMPOSE_ARGS exec -T devcms cmsInitDB
+          docker compose $COMPOSE_ARGS exec -T devcms /home/cmsuser/cms/bin/pip install -q /verify
+          cid=$(docker compose $COMPOSE_ARGS exec -T devcms /home/cmsuser/cms/bin/python /verify/scripts/verify_contest_setup.py | tail -1)
+          echo "Verify contest id: $cid"
+          echo "contest_id=$cid" >> "$GITHUB_OUTPUT"
+
+      - name: Start CMS services (LogService + ResourceService -a)
+        if: steps.changed.outputs.tasks != ''
+        working-directory: cms
+        run: |
+          docker compose $COMPOSE_ARGS exec -d devcms bash -c 'exec cmsLogService 0 >/tmp/log.out 2>&1'
+          docker compose $COMPOSE_ARGS exec -d devcms bash -c 'exec cmsResourceService -a ${{ steps.setup.outputs.contest_id }} 0 >/tmp/rs.out 2>&1'
+          # Wait until EvaluationService accepts RPC connections (port 25000):
+          # cmsAddSubmission notifies it and fails if it cannot connect.
+          for i in $(seq 1 60); do
+            docker compose $COMPOSE_ARGS exec -T devcms bash -c 'exec 3<>/dev/tcp/127.0.0.1/25000' 2>/dev/null && break
+            sleep 2
+          done
+          docker compose $COMPOSE_ARGS exec -T devcms bash -c 'exec 3<>/dev/tcp/127.0.0.1/25000'
+          docker compose $COMPOSE_ARGS exec -T devcms bash -c 'pgrep -af "cmsEvaluationService|cmsScoringService|cmsChecker" ; echo "workers: $(pgrep -fc cmsWorker)"'
 
       - name: Verify each changed task
+        if: steps.changed.outputs.tasks != ''
         working-directory: cms
         run: |
           set -e
+          rc=0
           for t in ${{ steps.changed.outputs.tasks }}; do
             echo "::group::verify $t"
-            docker compose -p verify -f docker/docker-compose.dev.yml exec -T \
-              -e VERIFY_CONTEST_ID=1 -e VERIFY_USERNAME=verifier \
-              devcms bash -lc "cd /verify && python -m cmsops.verify /tasks/$t"
+            if ! docker compose $COMPOSE_ARGS exec -T \
+                -e VERIFY_CONTEST_ID=${{ steps.setup.outputs.contest_id }} \
+                -e VERIFY_USERNAME=verifier \
+                devcms /home/cmsuser/cms/bin/python -m cmsops.verify "/verify/tasks/$t"; then
+              echo "::error title=verify failed::task $t failed verification"
+              rc=1
+            fi
             echo "::endgroup::"
           done
-        # Note: mount the tasks repo (incl. cmsops) into the container — add a
-        # bind mount to docker-compose.dev.yml override, or `docker cp` before exec.
+          exit $rc
+
+      - name: Dump service logs on failure
+        if: failure() && steps.changed.outputs.tasks != ''
+        working-directory: cms
+        run: |
+          docker compose $COMPOSE_ARGS exec -T devcms bash -c '
+            tail -n 50 /tmp/rs.out /tmp/log.out 2>/dev/null
+            for d in EvaluationService-0 ScoringService-0 Worker-0; do
+              f=/home/cmsuser/cms/log/$d/last.log
+              [ -f "$f" ] && { echo "== $f"; tail -n 40 "$f"; }
+            done
+            true
+          ' || true

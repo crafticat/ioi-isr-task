@@ -1,0 +1,27 @@
+# Override for the CMS fork's docker/docker-compose.dev.yml, used by the
+# verify workflow (and reproducible locally):
+#
+#   TASKS_WORKSPACE=/path/to/this/repo \
+#   docker compose -p verify \
+#     -f <fork>/docker/docker-compose.dev.yml \
+#     -f <this repo>/docker/docker-compose.verify.yml \
+#     up -d --build devdb devcms
+#
+# TASKS_WORKSPACE must point at the checked-out tasks repo; it is mounted at
+# /verify inside devcms (cmsops + scripts + tasks all reachable from there).
+services:
+  devdb:
+    environment:
+      # The fork's dev compose only sets trust auth; create the cmsdb database
+      # at first boot so cmsInitDB can install the schema directly.
+      POSTGRES_DB: cmsdb
+
+  devcms:
+    # The dev compose's `wait-for-it devdb:5432 -- bash` command exits
+    # immediately under `up -d`; keep the container alive instead.
+    command: sleep infinity
+    volumes:
+      - "${TASKS_WORKSPACE}:/verify"
+    # No published ports needed in CI (everything runs via `docker compose
+    # exec`), and 8888-8890 may be taken on the runner.
+    ports: !reset []

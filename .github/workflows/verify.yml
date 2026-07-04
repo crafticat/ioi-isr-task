@@ -71,7 +71,7 @@ jobs:
         # The italy_yaml loader writes sentinel files (.itime / .import_error)
         # into the task dir; the runner user is uid 1001 but the image's
         # cmsuser is uid 1100.
-        run: chmod -R a+rwX "$TASKS_WORKSPACE/tasks"
+        run: chmod -R a+rwX "$TASKS_WORKSPACE"   # whole checkout: pip writes cmsops.egg-info at the root, the loader writes sentinels under tasks/
 
       - name: Bring up the dev CMS (build fork image, start db + container)
         if: steps.changed.outputs.tasks != ''
